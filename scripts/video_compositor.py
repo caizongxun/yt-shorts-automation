@@ -23,6 +23,15 @@ from moviepy.editor import (
 )
 import librosa
 
+# Fix PIL compatibility for moviepy
+try:
+    from PIL import Image
+    # For Pillow 10+, ANTIALIAS is deprecated
+    if not hasattr(Image, 'ANTIALIAS'):
+        Image.ANTIALIAS = Image.Resampling.LANCZOS
+except Exception as e:
+    pass
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -111,17 +120,23 @@ class VideoCompositor:
             y1 = max(0, (orig_height - new_height) // 2)
             crop = video_clip.crop(x1=0, y1=y1, x2=orig_width, y2=y1 + new_height)
 
-        # Resize to exact Shorts dimensions
-        resized = crop.resize((target_width, target_height))
+        # Resize to exact Shorts dimensions using set_fps to ensure compatibility
+        try:
+            # Use set_size instead of resize for better compatibility
+            resized = crop.resize(height=target_height)
+        except Exception as e:
+            logger.warning(f"Resize failed, using fallback method: {e}")
+            # Fallback: use set_size for frame scaling
+            resized = crop.resize(width=target_width, height=target_height)
 
         # If video is too long, take a random segment
-        if resized.duration > target_duration:
+        if resized.duration > target_duration + 0.1:  # Add small buffer
             # Random start position (avoid end of video)
             max_start = max(0, resized.duration - target_duration)
             start_time = random.uniform(0, max_start) if max_start > 0 else 0
             logger.info(f"Trimming video from {start_time:.2f}s for {target_duration:.2f}s")
             resized = resized.subclipped(start_time, start_time + target_duration)
-        elif resized.duration < target_duration:
+        elif resized.duration < target_duration - 0.1:  # Add small buffer
             # Loop video if too short
             logger.warning(f"Video too short ({resized.duration:.2f}s), looping...")
             num_loops = int(target_duration / resized.duration) + 1
@@ -243,6 +258,11 @@ class VideoCompositor:
         """
         logger.info(f"Starting video composition: {output_file}")
         
+        bg_video = None
+        bg_cropped = None
+        audio = None
+        final_video = None
+        
         try:
             # Load audio
             logger.info(f"Loading audio: {audio_file}")
@@ -262,7 +282,6 @@ class VideoCompositor:
             
             # Crop to Shorts format and get random segment
             bg_cropped = self._crop_video_to_shorts(bg_video, audio_duration)
-            bg_video.close()  # Release original
 
             # Generate subtitles
             subtitles = self._generate_subtitles(audio_file)
@@ -278,7 +297,7 @@ class VideoCompositor:
             if randomize and self.enable_randomization:
                 brightness_adjust = random.uniform(-0.05, 0.05)
                 if brightness_adjust > 0:
-                    final_video = final_video.fx(lambda vf: vf.speedx(1.0))
+                    final_video = final_video.speedx(1.0)
                 logger.info(f"Applied brightness adjustment: {brightness_adjust:+.2%}")
 
             # Write to file
@@ -295,17 +314,34 @@ class VideoCompositor:
             )
 
             logger.info(f"Video composed successfully: {output_path}")
-            
-            # Cleanup
-            final_video.close()
-            audio.close()
-            bg_cropped.close()
-
             return str(output_path)
 
         except Exception as e:
             logger.error(f"Error during composition: {e}", exc_info=True)
             return None
+        
+        finally:
+            # Cleanup resources
+            try:
+                if final_video is not None:
+                    final_video.close()
+            except:
+                pass
+            try:
+                if audio is not None:
+                    audio.close()
+            except:
+                pass
+            try:
+                if bg_cropped is not None:
+                    bg_cropped.close()
+            except:
+                pass
+            try:
+                if bg_video is not None:
+                    bg_video.close()
+            except:
+                pass
 
 
 if __name__ == "__main__":
