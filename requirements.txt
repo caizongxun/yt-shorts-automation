@@ -17,13 +17,15 @@ google-api-python-client==2.105.0  # YouTube Data API v3
 yt-dlp==2024.1.1               # YouTube & Pexels video downloader (better than youtube-dl)
 requests==2.31.0               # HTTP client
 
+# Audio processing (CRITICAL - for video_compositor.py)
+librosa==0.10.0                # Audio feature extraction
+pydub==0.25.1                  # Audio manipulation
+scipy==1.11.4                  # Audio processing support
+
 # Async & scheduling
 aiohttp==3.9.1                 # Async HTTP client
 apscheduler==3.10.4            # Job scheduling
 python-dotenv==1.0.0           # Environment variable management
-
-# Audio processing
-pydub==0.25.1                  # Audio manipulation (if needed)
 
 # Logging & utilities
 tqdm==4.66.1                   # Progress bar
