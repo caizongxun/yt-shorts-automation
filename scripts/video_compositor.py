@@ -88,14 +88,16 @@ class VideoCompositor:
         return selected
 
     def _crop_video_to_shorts(self, video_clip: VideoFileClip, target_duration: float) -> VideoFileClip:
-        """Crop video to 9:16 aspect ratio (Shorts format).
+        """Crop video to 9:16 aspect ratio (Shorts format) with intelligent zoom.
+        
+        Uses zoom-and-crop instead of black bars for better visual experience.
         
         Args:
             video_clip: Source video
             target_duration: Target duration in seconds
             
         Returns:
-            Cropped video clip
+            Cropped video clip in 1080x1920 format
         """
         # Shorts format: 1080x1920 (9:16)
         target_width = 1080
@@ -108,45 +110,55 @@ class VideoCompositor:
         orig_aspect = orig_height / orig_width
 
         logger.info(f"Cropping video: {orig_width}x{orig_height} -> {target_width}x{target_height}")
+        logger.info(f"  Original aspect: {orig_aspect:.3f}, Target aspect: {target_aspect:.3f}")
 
         if orig_aspect > target_aspect:
-            # Original is taller: crop width
+            # Original is taller than target: crop width (or zoom in vertically)
+            # This is rare for landscape videos
             new_width = int(orig_height / target_aspect)
             x1 = max(0, (orig_width - new_width) // 2)
+            logger.info(f"  Cropping width from {orig_width} to {new_width}")
             crop = video_clip.crop(x1=x1, y1=0, x2=x1 + new_width, y2=orig_height)
         else:
-            # Original is wider: crop height
-            new_height = int(orig_width * target_aspect)
-            y1 = max(0, (orig_height - new_height) // 2)
-            crop = video_clip.crop(x1=0, y1=y1, x2=orig_width, y2=y1 + new_height)
+            # Original is wider than target (most common case)
+            # Option 1: Zoom in to fill the height without black bars
+            # Calculate how much we need to zoom
+            scale_factor = target_aspect / orig_aspect  # Will be > 1
+            new_width = int(orig_width * scale_factor)
+            new_height = int(orig_height * scale_factor)
+            
+            logger.info(f"  Zooming in by {scale_factor:.2f}x to fill 9:16 format")
+            
+            # First resize to fill the target aspect
+            resized = video_clip.resize(height=new_height)
+            
+            # Then crop to center
+            x1 = max(0, (new_width - target_width) // 2)
+            crop = resized.crop(x1=0, y1=0, x2=target_width, y2=target_height)
 
-        # Resize to exact Shorts dimensions using set_fps to ensure compatibility
+        # Resize to exact dimensions
         try:
-            # Use set_size instead of resize for better compatibility
-            resized = crop.resize(height=target_height)
+            final = crop.resize(height=target_height)
         except Exception as e:
-            logger.warning(f"Resize failed, using fallback method: {e}")
-            # Fallback: use set_size for frame scaling
-            resized = crop.resize(width=target_width, height=target_height)
+            logger.warning(f"Resize failed: {e}, using fallback")
+            final = crop.resize(width=target_width, height=target_height)
 
-        # If video is too long, take a random segment
-        if resized.duration > target_duration + 0.1:  # Add small buffer
-            # Random start position (avoid end of video)
-            max_start = max(0, resized.duration - target_duration)
+        # Handle duration
+        if final.duration > target_duration + 0.1:
+            # Take random segment
+            max_start = max(0, final.duration - target_duration)
             start_time = random.uniform(0, max_start) if max_start > 0 else 0
             logger.info(f"Trimming video from {start_time:.2f}s for {target_duration:.2f}s")
-            # Use subclip() instead of subclipped() - correct moviepy API
-            resized = resized.subclip(start_time, start_time + target_duration)
-        elif resized.duration < target_duration - 0.1:  # Add small buffer
-            # Loop video if too short
-            logger.warning(f"Video too short ({resized.duration:.2f}s), looping...")
-            num_loops = int(target_duration / resized.duration) + 1
-            clips = [resized] * num_loops
+            final = final.subclip(start_time, start_time + target_duration)
+        elif final.duration < target_duration - 0.1:
+            # Loop if too short
+            logger.warning(f"Video too short ({final.duration:.2f}s), looping...")
+            num_loops = int(target_duration / final.duration) + 1
+            clips = [final] * num_loops
             combined = concatenate_videoclips(clips)
-            # Use subclip() for trimming
-            resized = combined.subclip(0, target_duration)
+            final = combined.subclip(0, target_duration)
 
-        return resized
+        return final
 
     def _generate_subtitles(self, audio_file: str) -> List[Dict]:
         """Generate subtitle timing from audio using Whisper.
