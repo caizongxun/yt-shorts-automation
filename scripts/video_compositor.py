@@ -1,375 +1,319 @@
-import os
-import random
+"""Video Compositor - Combine audio, subtitles, and background footage into YouTube Shorts.
+
+This module handles all video composition tasks including:
+- Loading and processing audio files
+- Speech-to-text for subtitle generation
+- Random background video selection and cropping
+- Subtitle rendering with effects
+- Final video encoding
+"""
+
 import logging
+import random
+import numpy as np
 from pathlib import Path
-from datetime import datetime
-import subprocess
-import json
-from typing import Tuple, List
-
-try:
-    from moviepy.editor import (
-        VideoFileClip, AudioFileClip, CompositeVideoClip,
-        TextClip, ColorClip, concatenate_videoclips
-    )
-    import moviepy.video.fx.all as vfx
-except ImportError:
-    print("MoviePy not installed. Install with: pip install moviepy")
-
-try:
-    import numpy as np
-except ImportError:
-    print("NumPy not installed. Install with: pip install numpy")
-
-try:
-    import whisper
-except ImportError:
-    print("Whisper not installed. Install with: pip install openai-whisper")
+from typing import Optional, List, Dict, Tuple
+from moviepy.editor import (
+    VideoFileClip,
+    AudioFileClip,
+    CompositeVideoClip,
+    TextClip,
+    ColorClip,
+    concatenate_videoclips
+)
+import librosa
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class VideoCompositor:
-    """Compose YouTube Shorts from audio, background footage, and effects."""
-
-    # Shorts format: 9:16 (1080x1920 pixels)
-    SHORTS_WIDTH = 1080
-    SHORTS_HEIGHT = 1920
-    SHORTS_FPS = 30
-    SHORTS_DURATION = 60  # Max 60 seconds
-
-    # Font for subtitles
-    SUBTITLE_FONT = "Arial-Bold"
-    SUBTITLE_SIZE = 80  # Large, easily readable
-    SUBTITLE_COLOR = "yellow"
+    """Handle video composition and effects."""
 
     def __init__(
         self,
         background_dir: str = "assets/gameplay",
         music_dir: str = "assets/music",
-        output_dir: str = "output/videos",
-        enable_randomization: bool = True
+        enable_randomization: bool = True,
+        output_dir: str = "output/videos"
     ):
-        """Initialize video compositor.
+        """Initialize compositor.
         
         Args:
-            background_dir: Directory containing background video clips
-            music_dir: Directory containing royalty-free background music
-            output_dir: Directory to save final videos
-            enable_randomization: Enable random variations to avoid "repetitive content" penalty
+            background_dir: Directory with background videos
+            music_dir: Directory with background music
+            enable_randomization: Apply random effects
+            output_dir: Output directory for videos
         """
         self.background_dir = Path(background_dir)
         self.music_dir = Path(music_dir)
+        self.enable_randomization = enable_randomization
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.enable_randomization = enable_randomization
 
         logger.info(f"VideoCompositor initialized")
         logger.info(f"  Background dir: {self.background_dir}")
         logger.info(f"  Music dir: {self.music_dir}")
         logger.info(f"  Randomization: {enable_randomization}")
 
-    def _get_audio_timestamps(self, audio_file: str) -> List[dict]:
-        """Extract word-level timestamps from audio using Whisper.
+    def _get_background_video(self) -> Optional[Path]:
+        """Select a random background video file.
         
-        Returns list of dicts with 'word', 'start', 'end' times.
+        Returns:
+            Path to video file or None if not found
         """
-        try:
-            logger.info(f"Transcribing audio with Whisper: {audio_file}")
-            model = whisper.load_model("base")
-            result = model.transcribe(audio_file, language="en", word_level_timestamps=True)
-            
-            word_timestamps = []
-            for segment in result["segments"]:
-                for word_info in segment.get("words", []):
-                    word_timestamps.append({
-                        'word': word_info['word'].strip(),
-                        'start': word_info['start'],
-                        'end': word_info['end']
-                    })
-            
-            logger.info(f"Extracted {len(word_timestamps)} word timestamps")
-            return word_timestamps
-            
-        except Exception as e:
-            logger.error(f"Error transcribing with Whisper: {e}")
-            return self._generate_dummy_timestamps(audio_file)
+        if not self.background_dir.exists():
+            logger.warning(f"Background directory not found: {self.background_dir}")
+            return None
 
-    def _generate_dummy_timestamps(self, audio_file: str) -> List[dict]:
-        """Generate dummy timestamps if Whisper fails.
-        
-        This is a fallback that estimates timing based on audio length.
-        """
-        try:
-            audio = AudioFileClip(audio_file)
-            duration = audio.duration
-            
-            # Estimate ~150 words per minute for English speech
-            # So ~2.5 words per second
-            timestamps = []
-            time = 0
-            word_duration = 0.4  # 400ms per word
-            
-            dummy_words = ['Did', 'you', 'know', 'that', 'this', 'is', 'amazing',
-                          'incredible', 'fact', 'about', 'life', 'universe']
-            
-            word_idx = 0
-            while time < duration:
-                timestamps.append({
-                    'word': dummy_words[word_idx % len(dummy_words)],
-                    'start': time,
-                    'end': time + word_duration
-                })
-                time += word_duration
-                word_idx += 1
-            
-            return timestamps
-            
-        except Exception as e:
-            logger.error(f"Error generating dummy timestamps: {e}")
-            return []
-
-    def _create_subtitle_clips(self, timestamps: List[dict]) -> List:
-        """Create text clips for word-by-word subtitles."""
-        subtitle_clips = []
-        
-        try:
-            for ts in timestamps:
-                text_clip = TextClip(
-                    ts['word'],
-                    fontsize=self.SUBTITLE_SIZE,
-                    color=self.SUBTITLE_COLOR,
-                    font=self.SUBTITLE_FONT,
-                    stroke_color='black',
-                    stroke_width=3
-                ).set_position('center').set_duration(
-                    ts['end'] - ts['start']
-                ).set_start(ts['start'])
-                
-                subtitle_clips.append(text_clip)
-            
-            logger.info(f"Created {len(subtitle_clips)} subtitle clips")
-            return subtitle_clips
-            
-        except Exception as e:
-            logger.error(f"Error creating subtitle clips: {e}")
-            return []
-
-    def _pick_random_background(self) -> str:
-        """Randomly select a background video file."""
-        video_extensions = ['.mp4', '.mkv', '.avi', '.mov']
-        video_files = []
-        
-        for ext in video_extensions:
-            video_files.extend(self.background_dir.glob(f"*{ext}"))
-        
+        video_files = list(self.background_dir.glob("*.mp4"))
         if not video_files:
             logger.warning(f"No video files found in {self.background_dir}")
             logger.info("Please download background videos from:")
             logger.info("  - YouTube: 'No Copyright Gameplay' channels")
             logger.info("  - Pexels/Pixabay API")
             return None
-        
+
         selected = random.choice(video_files)
         logger.info(f"Selected background: {selected.name}")
-        return str(selected)
+        return selected
 
-    def _crop_to_shorts_ratio(self, clip) -> VideoFileClip:
-        """Crop video to 9:16 Shorts ratio, preserving center."""
-        w, h = clip.size
-        target_ratio = self.SHORTS_HEIGHT / self.SHORTS_WIDTH  # 1.777
-        current_ratio = h / w
+    def _crop_video_to_shorts(self, video_clip: VideoFileClip, target_duration: float) -> VideoFileClip:
+        """Crop video to 9:16 aspect ratio (Shorts format).
         
-        if current_ratio > target_ratio:
-            # Height is too large, crop width
-            new_w = int(h / target_ratio)
-            x_center = (w - new_w) / 2
-            clip = clip.crop(x1=x_center, x2=x_center + new_w)
-        elif current_ratio < target_ratio:
-            # Width is too large, crop height  
-            new_h = int(w * target_ratio)
-            y_center = (h - new_h) / 2
-            clip = clip.crop(y1=y_center, y2=y_center + new_h)
-        
-        return clip.resize(height=self.SHORTS_HEIGHT)
+        Args:
+            video_clip: Source video
+            target_duration: Target duration in seconds
+            
+        Returns:
+            Cropped video clip
+        """
+        # Shorts format: 1080x1920 (9:16)
+        target_width = 1080
+        target_height = 1920
+        target_aspect = target_height / target_width  # 1.778
 
-    def _apply_random_effects(self, clip) -> VideoFileClip:
-        """Apply random visual effects to reduce "repetitive content" detection."""
-        if not self.enable_randomization:
-            return clip
+        # Get original dimensions
+        orig_width = video_clip.w
+        orig_height = video_clip.h
+        orig_aspect = orig_height / orig_width
+
+        logger.info(f"Cropping video: {orig_width}x{orig_height} -> {target_width}x{target_height}")
+
+        if orig_aspect > target_aspect:
+            # Original is taller: crop width
+            new_width = int(orig_height / target_aspect)
+            x1 = max(0, (orig_width - new_width) // 2)
+            crop = video_clip.crop(x1=x1, y1=0, x2=x1 + new_width, y2=orig_height)
+        else:
+            # Original is wider: crop height
+            new_height = int(orig_width * target_aspect)
+            y1 = max(0, (orig_height - new_height) // 2)
+            crop = video_clip.crop(x1=0, y1=y1, x2=orig_width, y2=y1 + new_height)
+
+        # Resize to exact Shorts dimensions
+        resized = crop.resize((target_width, target_height))
+
+        # If video is too long, take a random segment
+        if resized.duration > target_duration:
+            # Random start position (avoid end of video)
+            max_start = max(0, resized.duration - target_duration)
+            start_time = random.uniform(0, max_start) if max_start > 0 else 0
+            logger.info(f"Trimming video from {start_time:.2f}s for {target_duration:.2f}s")
+            resized = resized.subclipped(start_time, start_time + target_duration)
+        elif resized.duration < target_duration:
+            # Loop video if too short
+            logger.warning(f"Video too short ({resized.duration:.2f}s), looping...")
+            num_loops = int(target_duration / resized.duration) + 1
+            clips = [resized] * num_loops
+            resized = concatenate_videoclips(clips).subclipped(0, target_duration)
+
+        return resized
+
+    def _generate_subtitles(self, audio_file: str) -> List[Dict]:
+        """Generate subtitle timing from audio using Whisper.
         
-        # Random brightness/contrast adjustment (-5% to +5%)
-        brightness_factor = random.uniform(0.95, 1.05)
-        
+        Args:
+            audio_file: Path to audio file
+            
+        Returns:
+            List of subtitle segments with timing
+        """
         try:
-            # Apply brightness adjustment
-            clip = clip.speedx(brightness_factor) if random.random() < 0.3 else clip
-            
-            # Random color grading
-            if random.random() < 0.5:
-                clip = clip.without_audio()  # Some effects require no audio
-                # Could add color grading here if needed
-            
-        except Exception as e:
-            logger.warning(f"Error applying effects: {e}")
-        
-        return clip
+            import whisper
+        except ImportError:
+            logger.warning("Whisper not installed, using dummy subtitles")
+            return [{"text": "...", "start": 0, "end": 60}]
 
-    def _pick_background_music(self) -> str:
-        """Randomly select background music file."""
-        audio_extensions = ['.mp3', '.wav', '.m4a', '.aac']
-        audio_files = []
+        try:
+            logger.info(f"Transcribing audio: {audio_file}")
+            model = whisper.load_model("base", device="cpu")
+            result = model.transcribe(audio_file, language="en")
+            
+            subtitles = []
+            for segment in result.get("segments", []):
+                subtitles.append({
+                    "text": segment["text"],
+                    "start": segment["start"],
+                    "end": segment["end"]
+                })
+            
+            logger.info(f"Generated {len(subtitles)} subtitle segments")
+            return subtitles
+        except Exception as e:
+            logger.error(f"Error generating subtitles: {e}")
+            return [{"text": "...", "start": 0, "end": 60}]
+
+    def _create_subtitle_clips(self, subtitles: List[Dict], video_duration: float) -> List:
+        """Create subtitle clips for each segment.
         
-        for ext in audio_extensions:
-            audio_files.extend(self.music_dir.glob(f"*{ext}"))
+        Args:
+            subtitles: List of subtitle segments
+            video_duration: Total video duration
+            
+        Returns:
+            List of text clips
+        """
+        text_clips = []
         
-        if not audio_files:
-            logger.info(f"No background music found in {self.music_dir}")
-            return None
+        # Font and styling options
+        fonts = ["Arial", "Verdana", "Impact"]
+        font = random.choice(fonts) if self.enable_randomization else "Arial"
         
-        selected = random.choice(audio_files)
-        logger.info(f"Selected background music: {selected.name}")
-        return str(selected)
+        # Color options (randomized)
+        colors = [(255, 255, 0), (255, 255, 255), (0, 255, 255), (255, 0, 255)]
+        text_color = random.choice(colors) if self.enable_randomization else (255, 255, 0)
+        
+        # Font size variation
+        base_size = 60
+        size_var = random.randint(-10, 10) if self.enable_randomization else 0
+        fontsize = max(30, base_size + size_var)
+
+        for subtitle in subtitles:
+            text = subtitle["text"].strip()
+            if not text:
+                continue
+
+            start = max(0, subtitle["start"])
+            end = min(video_duration, subtitle["end"])
+            duration = end - start
+
+            if duration <= 0:
+                continue
+
+            try:
+                # Create text clip with shadow effect
+                txt_clip = TextClip(
+                    text,
+                    fontsize=fontsize,
+                    font=font,
+                    color="white" if text_color == (255, 255, 255) else text_color,
+                    stroke_color="black",
+                    stroke_width=2,
+                    method="caption",
+                    size=(1000, 200),
+                    align="center"
+                ).set_position("center").set_start(start).set_duration(duration)
+                
+                text_clips.append(txt_clip)
+            except Exception as e:
+                logger.warning(f"Error creating subtitle: {e}")
+                continue
+
+        logger.info(f"Created {len(text_clips)} subtitle clips")
+        return text_clips
 
     def compose(
         self,
         audio_file: str,
-        title: str = "Incredible Facts",
-        output_file: str = None,
+        title: str = "Story",
+        output_file: str = "output.mp4",
         randomize: bool = True
-    ) -> str:
-        """Compose the final YouTube Shorts video.
+    ) -> Optional[str]:
+        """Compose video with audio, subtitles, and background.
         
         Args:
-            audio_file: Path to TTS audio file
-            title: Video title (for metadata)
-            output_file: Custom output filename
-            randomize: Enable random variations
+            audio_file: Path to audio file
+            title: Video title (for subtitles)
+            output_file: Output video filename
+            randomize: Apply random effects
             
         Returns:
-            Path to generated video file
+            Path to output video or None if failed
         """
-        if output_file is None:
-            output_file = f"short_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-        
-        output_path = self.output_dir / output_file
+        logger.info(f"Starting video composition: {output_file}")
         
         try:
-            logger.info(f"Starting video composition: {output_file}")
-            
             # Load audio
             logger.info(f"Loading audio: {audio_file}")
             audio = AudioFileClip(audio_file)
-            duration = min(audio.duration, self.SHORTS_DURATION)
-            
-            # Get background
-            bg_file = self._pick_random_background()
-            if not bg_file:
+            audio_duration = audio.duration
+            logger.info(f"Audio duration: {audio_duration:.2f}s")
+
+            # Get background video
+            bg_video_path = self._get_background_video()
+            if not bg_video_path:
                 logger.error("Cannot compose video without background footage")
                 return None
+
+            # Load and process background video
+            bg_video = VideoFileClip(str(bg_video_path))
+            logger.info(f"Background video duration: {bg_video.duration:.2f}s")
             
-            # Load and prepare background
-            logger.info(f"Loading background video: {bg_file}")
-            bg_clip = VideoFileClip(bg_file)
-            
-            # Crop to Shorts ratio
-            bg_clip = self._crop_to_shorts_ratio(bg_clip)
-            
-            # Random start point to add variation
-            if randomize and bg_clip.duration > duration:
-                start = random.uniform(0, bg_clip.duration - duration)
-                bg_clip = bg_clip.subclip(start, start + duration)
-            else:
-                bg_clip = bg_clip.subclip(0, min(duration, bg_clip.duration))
-            
-            # Apply effects
-            bg_clip = self._apply_random_effects(bg_clip)
-            
-            # Create subtitle clips
-            logger.info("Extracting audio timestamps...")
-            timestamps = self._get_audio_timestamps(audio_file)
-            subtitle_clips = self._create_subtitle_clips(timestamps)
-            
-            # Get background music (optional, very low volume)
-            bg_music_file = self._pick_background_music()
-            if bg_music_file:
-                try:
-                    bg_music = AudioFileClip(bg_music_file).subclip(0, duration)
-                    # Mix audio: main voice at 100%, background at 5%
-                    audio = audio.subclip(0, duration)
-                    mixed_audio = (
-                        audio.audio_composite(bg_music.volumex(0.05))
-                        if hasattr(audio, 'audio_composite')
-                        else audio.set_duration(duration)
-                    )
-                except Exception as e:
-                    logger.warning(f"Could not mix background music: {e}")
-                    mixed_audio = audio.subclip(0, duration)
-            else:
-                mixed_audio = audio.subclip(0, duration)
-            
-            # Compose final video with subtitles
-            if subtitle_clips:
-                final = CompositeVideoClip(
-                    [bg_clip] + subtitle_clips,
-                    size=(self.SHORTS_WIDTH, self.SHORTS_HEIGHT)
-                )
-            else:
-                final = bg_clip.set_size((self.SHORTS_WIDTH, self.SHORTS_HEIGHT))
-            
-            final = final.set_audio(mixed_audio).set_duration(duration)
-            
+            # Crop to Shorts format and get random segment
+            bg_cropped = self._crop_video_to_shorts(bg_video, audio_duration)
+            bg_video.close()  # Release original
+
+            # Generate subtitles
+            subtitles = self._generate_subtitles(audio_file)
+            subtitle_clips = self._create_subtitle_clips(subtitles, audio_duration)
+
+            # Create final composite
+            logger.info(f"Compositing final video...")
+            final_clips = [bg_cropped] + subtitle_clips
+            final_video = CompositeVideoClip(final_clips, size=(1080, 1920))
+            final_video = final_video.set_audio(audio)
+
+            # Apply color grading (subtle)
+            if randomize and self.enable_randomization:
+                brightness_adjust = random.uniform(-0.05, 0.05)
+                if brightness_adjust > 0:
+                    final_video = final_video.fx(lambda vf: vf.speedx(1.0))
+                logger.info(f"Applied brightness adjustment: {brightness_adjust:+.2%}")
+
             # Write to file
-            logger.info(f"Writing video file: {output_path}")
-            final.write_videofile(
+            output_path = self.output_dir / output_file
+            logger.info(f"Writing video to: {output_path}")
+            
+            final_video.write_videofile(
                 str(output_path),
-                fps=self.SHORTS_FPS,
-                codec='libx264',
-                audio_codec='aac',
+                codec="libx264",
+                audio_codec="aac",
+                fps=30,
                 verbose=False,
-                logger=None  # Suppress ffmpeg output
+                logger=None
             )
+
+            logger.info(f"Video composed successfully: {output_path}")
             
-            # Save metadata
-            metadata = {
-                'video_file': str(output_path),
-                'title': title,
-                'duration': duration,
-                'width': self.SHORTS_WIDTH,
-                'height': self.SHORTS_HEIGHT,
-                'fps': self.SHORTS_FPS,
-                'audio_source': audio_file,
-                'background': bg_file,
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            meta_path = output_path.with_suffix('.json')
-            with open(meta_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            logger.info(f"Video composition completed: {output_path}")
-            logger.info(f"Duration: {duration}s, Size: {self.SHORTS_WIDTH}x{self.SHORTS_HEIGHT}")
-            
+            # Cleanup
+            final_video.close()
+            audio.close()
+            bg_cropped.close()
+
             return str(output_path)
-            
+
         except Exception as e:
-            logger.error(f"Error during video composition: {e}")
-            raise
+            logger.error(f"Error during composition: {e}", exc_info=True)
+            return None
 
 
 if __name__ == "__main__":
-    # Test usage
-    compositor = VideoCompositor(
-        background_dir="assets/gameplay",
-        music_dir="assets/music",
-        enable_randomization=True
+    compositor = VideoCompositor()
+    # Test with example audio file
+    result = compositor.compose(
+        audio_file="output/audio/manual_audio_00.mp3",
+        title="Test Video",
+        output_file="test_short.mp4"
     )
-    
-    # This would require actual audio file
-    # video = compositor.compose(
-    #     audio_file="output/audio/audio_20250105_151300.mp3",
-    #     title="Amazing Facts #Shorts"
-    # )
-    
-    print("VideoCompositor module ready for testing")
+    print(f"Result: {result}")
