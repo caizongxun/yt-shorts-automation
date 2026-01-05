@@ -72,7 +72,7 @@ class ManualContentProvider:
             title = "Story"
             content_start = 0
             
-            if lines[0].startswith("Title:"):
+            if lines and lines[0].startswith("Title:"):
                 title = lines[0].replace("Title:", "").strip()
                 content_start = 1
             
