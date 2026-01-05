@@ -1,0 +1,42 @@
+# Core dependencies
+praw==1.7.1                    # Reddit API wrapper
+edge-tts==6.1.14               # Free Microsoft Edge TTS
+MoviePy==1.0.3                 # Video composition
+OpenAI-Whisper==20231117       # Audio transcription (for timestamps)
+Pillow==10.1.0                 # Image processing
+numpy==1.24.3                  # Numerical computing
+
+# YouTube upload & automation
+selenium==4.15.2               # Browser automation for YouTube upload
+chrome-webdriver==4.5.3        # ChromeDriver
+GoogleAuth==2.26.1             # Google API authentication
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.105.0  # YouTube Data API v3
+
+# Async & scheduling
+aiohttp==3.9.1                 # Async HTTP client
+apscheduler==3.10.4            # Job scheduling
+python-dotenv==1.0.0           # Environment variable management
+
+# Image generation (optional, for AI-generated backgrounds)
+torch==2.1.1                   # PyTorch (GPU support: add [cuda11] variant)
+diffusers==0.25.1              # Hugging Face diffusers for FLUX/SD
+safetensors==0.4.1             # Model loading
+
+# Logging & utilities
+requests==2.31.0               # HTTP client
+tqdm==4.66.1                   # Progress bar
+pydantic==2.5.0                # Data validation
+click==8.1.7                   # CLI framework
+
+# Development
+pytest==7.4.3                  # Testing
+pytest-asyncio==0.21.1         # Async testing
+black==23.12.0                 # Code formatter
+flake8==6.1.0                  # Linter
+
+# Optional: Local LLM for metadata (replaces ChatGPT)
+ollama==0.1.0                  # Local LLM runner (requires ollama binary)
+langchain==0.1.0               # LLM framework
+
