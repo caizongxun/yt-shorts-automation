@@ -11,7 +11,7 @@ Workflow:
 4. Profits!
 
 Usage:
-    python scripts/manual_daily_pipeline.py --count 3 --voice en-male
+    python scripts/manual_daily_pipeline.py --count 3 --voice en-male-excited
 """
 
 import argparse
@@ -42,6 +42,22 @@ from manual_content_provider import ManualContentProvider
 from audio_generator import AudioGenerator
 from video_compositor import VideoCompositor
 
+# Available voice options
+AVAILABLE_VOICES = {
+    'en-male-excited': 'High-energy, upbeat male voice',
+    'en-male-calm': 'Deep, calm male voice',
+    'en-male-casual': 'Warm, friendly male voice',
+    'en-male-friendly': 'Bright, engaging voice',
+    'en-female-natural': 'Natural, friendly female voice',
+    'en-female-warm': 'Warm and engaging female voice',
+    'en-female-professional': 'Professional, clear female voice',
+    # Legacy options
+    'en-male': 'Default male voice (mapped to en-male-calm)',
+    'en-female': 'Default female voice (mapped to en-female-natural)',
+    'en-casual': 'Casual voice (mapped to en-male-casual)',
+    'en-male-old': 'Older male voice (mapped to en-male-calm)',
+}
+
 
 class ManualDailyPipeline:
     """Orchestrate video generation from manually-provided stories."""
@@ -49,7 +65,7 @@ class ManualDailyPipeline:
     def __init__(
         self,
         story_count: int = 3,
-        voice: str = 'en-male',
+        voice: str = 'en-male-excited',
         randomize_videos: bool = True,
         upload: bool = False
     ):
@@ -67,7 +83,9 @@ class ManualDailyPipeline:
         self.upload = upload
 
         self.content_provider = ManualContentProvider(content_dir="content")
-        self.audio_gen = AudioGenerator(voice=voice, rate="+10%")
+        # Use higher rate for excited voices, normal for calm
+        rate = '+15%' if 'excited' in voice else '+10%'
+        self.audio_gen = AudioGenerator(voice=voice, rate=rate)
         self.compositor = VideoCompositor(
             background_dir="assets/gameplay",
             music_dir="assets/music",
@@ -84,7 +102,8 @@ class ManualDailyPipeline:
 
         logger.info(f"Manual Daily Pipeline initialized:")
         logger.info(f"  Story count: {story_count}")
-        logger.info(f"  Voice: {voice}")
+        logger.info(f"  Voice: {voice} ({AVAILABLE_VOICES.get(voice, 'custom')})")
+        logger.info(f"  Speech rate: {rate}")
         logger.info(f"  Randomization: {randomize_videos}")
         logger.info(f"  Upload: {upload}")
 
@@ -207,7 +226,19 @@ class ManualDailyPipeline:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Manual YouTube Shorts generation pipeline (no Reddit/LLM needed)"
+        description="Manual YouTube Shorts generation pipeline (no Reddit/LLM needed)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Available voices:
+  Excited (best for Shorts):  en-male-excited, en-female-warm
+  Calm & storytelling:        en-male-calm, en-female-professional
+  Casual & friendly:          en-male-casual, en-female-natural
+  Legacy options:             en-male, en-female, en-casual, en-male-old
+
+Examples:
+  python scripts/manual_daily_pipeline.py --count 3 --voice en-male-excited
+  python scripts/manual_daily_pipeline.py --count 5 --voice en-female-warm
+  python scripts/manual_daily_pipeline.py --count 2 --voice en-male-calm
+        """
     )
     parser.add_argument(
         '--count',
@@ -218,9 +249,9 @@ def main():
     parser.add_argument(
         '--voice',
         type=str,
-        default='en-male',
-        choices=['en-male', 'en-female', 'en-casual', 'en-male-old'],
-        help='TTS voice to use (default: en-male)'
+        default='en-male-excited',
+        choices=list(AVAILABLE_VOICES.keys()),
+        help='TTS voice to use (default: en-male-excited)'
     )
     parser.add_argument(
         '--no-randomize',
