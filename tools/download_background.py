@@ -52,10 +52,10 @@ class VideoDownloader:
         """
         try:
             import yt_dlp
-            logger.info(f"yt-dlp version: {yt_dlp.__version__}")
+            logger.info(f"yt-dlp installed successfully")
             return True
         except ImportError:
-            logger.error("yt-dlp not installed!")
+            logger.error("[ERROR] yt-dlp not installed!")
             logger.info("Install with: pip install yt-dlp")
             return False
 
@@ -74,7 +74,7 @@ class VideoDownloader:
 
         # Validate URL
         if not url.startswith(("http://", "https://")):
-            logger.error("Invalid URL. Must start with http:// or https://")
+            logger.error("[ERROR] Invalid URL. Must start with http:// or https://")
             return None
 
         logger.info(f"[START] Downloading video...")
@@ -89,7 +89,7 @@ class VideoDownloader:
 
             # yt-dlp options
             ydl_opts = {
-                'format': f'best[height<=720]/best',  # 720p or best available
+                'format': f'best[height<={quality}]/best',  # Get best video up to specified quality
                 'outtmpl': str(self.output_dir / '%(title)s.%(ext)s'),
                 'quiet': False,
                 'no_warnings': False,
@@ -97,7 +97,11 @@ class VideoDownloader:
                 'socket_timeout': 30,
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
+                },
+                'postprocessors': [{
+                    'key': 'FFmpegVideoConvertor',
+                    'preferedformat': 'mp4'
+                }]
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -106,12 +110,19 @@ class VideoDownloader:
                 filename = ydl.prepare_filename(info)
                 logger.info(f"  Title: {info.get('title', 'Unknown')}")
                 logger.info(f"  Duration: {info.get('duration', 'N/A')} seconds")
+                logger.info(f"  Available formats: {len(info.get('formats', []))} formats")
                 logger.info("")
 
                 logger.info("[DOWNLOADING] Starting download...")
                 ydl.download([url])
 
             output_file = Path(filename)
+            # Check for .mp4 variant if original doesn't exist
+            if not output_file.exists():
+                mp4_file = output_file.with_suffix('.mp4')
+                if mp4_file.exists():
+                    output_file = mp4_file
+
             if output_file.exists():
                 logger.info("")
                 logger.info("[SUCCESS] Download completed!")
@@ -123,16 +134,20 @@ class VideoDownloader:
                 return output_file
             else:
                 logger.error("[ERROR] File not found after download")
+                logger.info("Checking directory contents:")
+                for f in self.output_dir.glob("*"):
+                    logger.info(f"  Found: {f.name}")
                 return None
 
         except Exception as e:
-            logger.error(f"[ERROR] Download failed: {e}")
+            logger.error(f"[ERROR] Download failed: {str(e)}")
             logger.info("")
             logger.info("Troubleshooting:")
             logger.info("  1. Check your internet connection")
             logger.info("  2. Make sure the URL is valid")
             logger.info("  3. Try a different URL")
             logger.info("  4. Update yt-dlp: pip install --upgrade yt-dlp")
+            logger.info("  5. For YouTube videos with age restrictions, you may need to set up authentication")
             return None
 
     def _progress_hook(self, d):
@@ -192,7 +207,7 @@ class VideoDownloader:
                 print("[CANCELLED] Download cancelled by user")
                 break
             except Exception as e:
-                logger.error(f"[ERROR] Unexpected error: {e}")
+                logger.error(f"[ERROR] Unexpected error: {str(e)}")
                 continue
 
 
