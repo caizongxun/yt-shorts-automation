@@ -11,25 +11,32 @@ logger = logging.getLogger(__name__)
 
 
 class AudioGenerator:
-    """Generate speech audio from text using Edge-TTS (free, high quality)."""
+    """Generate speech audio from text using multiple TTS engines."""
 
-    # Available voices with good quality
-    VOICES = {
-        'en-male': 'en-US-ChristopherNeural',      # Deep male voice
-        'en-female': 'en-US-AvaNeural',            # Natural female voice
-        'en-casual': 'en-US-GuyNeural',            # Casual male
-        'en-male-old': 'en-US-ArthurNeural',       # Older male voice
+    # Edge TTS voices with emotional variants
+    EDGE_VOICES = {
+        # Emotional/Expressive variants
+        'en-male-excited': 'en-US-GuyNeural',           # More energetic
+        'en-male-calm': 'en-US-ChristopherNeural',      # Deep, calm
+        'en-male-casual': 'en-US-ArthurNeural',         # Casual, warm
+        'en-male-friendly': 'en-US-AmberNeural',        # Friendly (female for variety)
+        
+        # Female variants
+        'en-female-natural': 'en-US-AvaNeural',         # Natural, friendly
+        'en-female-warm': 'en-US-JennyNeural',          # Warm and engaging
+        'en-female-professional': 'en-US-AriaNeural',   # Professional
     }
 
-    def __init__(self, voice: str = 'en-male', rate: str = '+10%', output_dir: str = 'output/audio'):
+    def __init__(self, voice: str = 'en-male-excited', rate: str = '+15%', output_dir: str = 'output/audio'):
         """Initialize audio generator.
         
         Args:
-            voice: Voice selection (key from VOICES dict or direct voice name)
+            voice: Voice selection (key from EDGE_VOICES dict or direct voice name)
             rate: Speech rate adjustment (e.g., '+10%', '-5%', '0%')
+                 Use higher rate (+15%) for more energetic feel
             output_dir: Directory to save audio files
         """
-        self.voice = self.VOICES.get(voice, voice)  # Allow both preset and custom voice names
+        self.voice = self.EDGE_VOICES.get(voice, voice)  # Allow both preset and custom
         self.rate = rate
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -56,7 +63,7 @@ class AudioGenerator:
         output_path = self.output_dir / output_file
         
         try:
-            logger.info(f"Generating audio: {output_file}")
+            logger.info(f"Generating audio: {output_file} (voice: {self.voice})")
             
             # Initialize TTS communicator
             communicate = edge_tts.Communicate(
@@ -199,13 +206,27 @@ class AudioGenerator:
 
     def get_available_voices(self) -> dict:
         """Return available voice presets."""
-        return self.VOICES.copy()
+        return self.EDGE_VOICES.copy()
 
     def list_voices(self):
-        """Print available voice options."""
+        """Print available voice options with emotional descriptions."""
         print("\n=== Available Voice Presets ===")
-        for key, voice_name in self.VOICES.items():
-            print(f"  {key:15} -> {voice_name}")
+        print("\n[MALE VOICES]")
+        print(f"  {'en-male-excited':<25} -> {self.EDGE_VOICES['en-male-excited']:<20} (energetic, upbeat)")
+        print(f"  {'en-male-calm':<25} -> {self.EDGE_VOICES['en-male-calm']:<20} (deep, soothing)")
+        print(f"  {'en-male-casual':<25} -> {self.EDGE_VOICES['en-male-casual']:<20} (warm, friendly)")
+        print(f"  {'en-male-friendly':<25} -> {self.EDGE_VOICES['en-male-friendly']:<20} (bright, engaging)")
+        
+        print("\n[FEMALE VOICES]")
+        print(f"  {'en-female-natural':<25} -> {self.EDGE_VOICES['en-female-natural']:<20} (natural, friendly)")
+        print(f"  {'en-female-warm':<25} -> {self.EDGE_VOICES['en-female-warm']:<20} (warm, engaging)")
+        print(f"  {'en-female-professional':<25} -> {self.EDGE_VOICES['en-female-professional']:<20} (professional, clear)")
+        
+        print("\n[RATE SUGGESTIONS]")
+        print("  '+15%' or '+20%'  -> More energetic, exciting (good for shorts)")
+        print("  '+10%'            -> Slightly faster, engaging")
+        print("  '0%'              -> Normal speed")
+        print("  '-10%'            -> Slower, more deliberate")
         print("\nOr use any valid Edge-TTS voice name directly.")
         print("For full list, visit: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support\n")
 
@@ -216,23 +237,12 @@ if __name__ == "__main__":
     # Test usage
     print("Testing AudioGenerator...\n")
     
-    generator = AudioGenerator(voice='en-male', rate='+10%')
-    
     # Show available voices
+    generator = AudioGenerator(voice='en-male-excited', rate='+15%')
     generator.list_voices()
     
-    # Test single generation
-    print("Generating single audio...")
-    text = "Did you know? Honey never spoils. Archaeologists found ancient Egyptian honey that's 3000 years old and still edible!"
+    # Test single generation with emotional voice
+    print("Generating single audio with excited voice...")
+    text = "Did you know? Honey never spoils! Archaeologists found 3000-year-old honey that is still edible!"
     audio_file = generator.generate(text)
     print(f"Generated: {audio_file}\n")
-    
-    # Test batch generation
-    print("Generating batch audio...")
-    texts = [
-        "Fact one: Your body contains 37 trillion cells.",
-        "Fact two: Flamingos are born with grey feathers, not pink.",
-        "Fact three: A group of flamingos is called a flamboyance."
-    ]
-    files = generator.generate_batch(texts)
-    print(f"Generated {len(files)} audio files")
