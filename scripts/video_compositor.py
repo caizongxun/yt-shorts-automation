@@ -135,13 +135,16 @@ class VideoCompositor:
             max_start = max(0, resized.duration - target_duration)
             start_time = random.uniform(0, max_start) if max_start > 0 else 0
             logger.info(f"Trimming video from {start_time:.2f}s for {target_duration:.2f}s")
-            resized = resized.subclipped(start_time, start_time + target_duration)
+            # Use subclip() instead of subclipped() - correct moviepy API
+            resized = resized.subclip(start_time, start_time + target_duration)
         elif resized.duration < target_duration - 0.1:  # Add small buffer
             # Loop video if too short
             logger.warning(f"Video too short ({resized.duration:.2f}s), looping...")
             num_loops = int(target_duration / resized.duration) + 1
             clips = [resized] * num_loops
-            resized = concatenate_videoclips(clips).subclipped(0, target_duration)
+            combined = concatenate_videoclips(clips)
+            # Use subclip() for trimming
+            resized = combined.subclip(0, target_duration)
 
         return resized
 
