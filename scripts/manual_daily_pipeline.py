@@ -8,7 +8,7 @@ Workflow:
 1. Create story files in content/ directory
 2. Run this script
 3. It generates 3 YouTube Shorts automatically
-4. Profits! 🎬
+4. Profits!
 
 Usage:
     python scripts/manual_daily_pipeline.py --count 3 --voice en-male
@@ -29,7 +29,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_dir / f"manual_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"),
+        logging.FileHandler(log_dir / f"manual_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log", encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -104,19 +104,19 @@ class ManualDailyPipeline:
             stories = self.content_provider.fetch_stories(count=self.story_count)
 
             if not stories:
-                logger.error("❌ No stories found!")
-                logger.info("\n📝 How to add stories:")
+                logger.error("[ERROR] No stories found!")
+                logger.info("\n[INFO] How to add stories:")
                 logger.info("   1. Create a file: content/story_1.txt")
                 logger.info("   2. Format:")
                 logger.info("      Title: Your Story Title")
                 logger.info("      ")
                 logger.info("      Your story content here...")
                 logger.info("   3. Run this script again")
-                logger.info("\n💡 Tip: Run this to create example files:")
+                logger.info("\n[TIP] Run this to create example files:")
                 logger.info("   python scripts/manual_daily_pipeline.py --create-examples")
                 return False
 
-            logger.info(f"✅ Loaded {len(stories)} stories")
+            logger.info(f"[SUCCESS] Loaded {len(stories)} stories")
 
             # Step 2: Generate audio
             logger.info("\n[STEP 2/4] Generating audio files...")
@@ -131,16 +131,16 @@ class ManualDailyPipeline:
                         f"manual_audio_{i:02d}.mp3"
                     )
                     audio_files.append(audio_file)
-                    logger.info(f"    ✅ Generated: {Path(audio_file).name}")
+                    logger.info(f"    [OK] Generated: {Path(audio_file).name}")
                 except Exception as e:
-                    logger.error(f"    ❌ Failed: {e}")
+                    logger.error(f"    [SKIP] Failed: {e}")
                     continue
 
             if not audio_files:
-                logger.error("No audio files generated")
+                logger.error("[ERROR] No audio files generated")
                 return False
 
-            logger.info(f"✅ Generated {len(audio_files)} audio files")
+            logger.info(f"[SUCCESS] Generated {len(audio_files)} audio files")
 
             # Step 3: Compose videos
             logger.info("\n[STEP 3/4] Composing videos...")
@@ -164,33 +164,33 @@ class ManualDailyPipeline:
                         'description': f"{story.get('content', '')[:100]}...\n\n#Shorts #Facts #Viral",
                         'tags': ['Shorts', 'Facts', 'Viral', 'Amazing']
                     })
-                    logger.info(f"    ✅ Composed: {Path(video_file).name}")
+                    logger.info(f"    [OK] Composed: {Path(video_file).name}")
                 except Exception as e:
-                    logger.error(f"    ❌ Failed: {e}")
+                    logger.error(f"    [SKIP] Failed: {e}")
                     continue
 
             if not video_files:
-                logger.error("No videos composed")
+                logger.error("[ERROR] No videos composed")
                 return False
 
-            logger.info(f"✅ Composed {len(video_files)} videos")
+            logger.info(f"[SUCCESS] Composed {len(video_files)} videos")
 
             # Step 4: Schedule uploads
             logger.info("\n[STEP 4/4] Scheduling uploads...")
             if self.upload:
                 try:
                     self.uploader.queue_uploads(video_files, metadata)
-                    logger.info(f"✅ Scheduled {len(video_files)} videos for upload")
+                    logger.info(f"[SUCCESS] Scheduled {len(video_files)} videos for upload")
                 except Exception as e:
-                    logger.error(f"❌ Upload scheduling failed: {e}")
+                    logger.error(f"[ERROR] Upload scheduling failed: {e}")
                     logger.info("   Videos are ready for manual upload")
             else:
-                logger.info(f"✅ Generated {len(video_files)} videos (upload disabled)")
+                logger.info(f"[SUCCESS] Generated {len(video_files)} videos (upload disabled)")
                 logger.info("   Videos ready in: output/videos/")
 
             # Summary
             logger.info("\n" + "=" * 60)
-            logger.info("✅ PIPELINE COMPLETED SUCCESSFULLY")
+            logger.info("[SUCCESS] PIPELINE COMPLETED SUCCESSFULLY")
             logger.info(f"   Generated videos: {len(video_files)}")
             logger.info(f"   Audio files: {len(audio_files)}")
             logger.info(f"   Output directory: {self.compositor.output_dir}")
@@ -200,7 +200,7 @@ class ManualDailyPipeline:
             return True
 
         except Exception as e:
-            logger.error(f"\n❌ Pipeline failed: {e}", exc_info=True)
+            logger.error(f"\n[ERROR] Pipeline failed: {e}", exc_info=True)
             return False
 
 
@@ -245,7 +245,7 @@ def main():
         logger.info("Creating example story files...")
         provider = ManualContentProvider()
         provider.create_example_files()
-        logger.info("✅ Example files created in content/ directory")
+        logger.info("[SUCCESS] Example files created in content/ directory")
         logger.info("   You can now edit them or create your own!")
         return 0
 
