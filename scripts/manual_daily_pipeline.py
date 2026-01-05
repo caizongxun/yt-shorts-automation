@@ -18,21 +18,29 @@ import argparse
 import logging
 from pathlib import Path
 from datetime import datetime
+import sys
+import os
 
-from manual_content_provider import ManualContentProvider
-from audio_generator import AudioGenerator
-from video_compositor import VideoCompositor
-from youtube_uploader import UploadScheduler
+# Auto-create logs directory
+log_dir = Path("logs")
+log_dir.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f"logs/manual_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"),
+        logging.FileHandler(log_dir / f"manual_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Add scripts directory to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from manual_content_provider import ManualContentProvider
+from audio_generator import AudioGenerator
+from video_compositor import VideoCompositor
 
 
 class ManualDailyPipeline:
@@ -67,7 +75,12 @@ class ManualDailyPipeline:
         )
 
         if self.upload:
-            self.uploader = UploadScheduler()
+            try:
+                from youtube_uploader import UploadScheduler
+                self.uploader = UploadScheduler()
+            except ImportError:
+                logger.warning("YouTube uploader not available, upload disabled")
+                self.upload = False
 
         logger.info(f"Manual Daily Pipeline initialized:")
         logger.info(f"  Story count: {story_count}")
@@ -100,7 +113,7 @@ class ManualDailyPipeline:
                 logger.info("      Your story content here...")
                 logger.info("   3. Run this script again")
                 logger.info("\n💡 Tip: Run this to create example files:")
-                logger.info("   python -c \"from scripts.manual_content_provider import ManualContentProvider; ManualContentProvider().create_example_files()\"")
+                logger.info("   python scripts/manual_daily_pipeline.py --create-examples")
                 return False
 
             logger.info(f"✅ Loaded {len(stories)} stories")
