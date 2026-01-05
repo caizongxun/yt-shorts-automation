@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 import json
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,15 +33,18 @@ class AudioGenerator:
         self.rate = rate
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.max_retries = 3
+        self.retry_delay = 2  # seconds
         
         logger.info(f"AudioGenerator initialized with voice: {self.voice}, rate: {rate}")
 
-    async def generate_async(self, text: str, output_file: str = None) -> str:
-        """Generate audio from text asynchronously.
+    async def generate_async(self, text: str, output_file: str = None, retry_count: int = 0) -> str:
+        """Generate audio from text asynchronously with retry logic.
         
         Args:
             text: Text to convert to speech
             output_file: Custom output filename (without path)
+            retry_count: Current retry attempt
             
         Returns:
             Path to generated audio file
@@ -52,17 +56,41 @@ class AudioGenerator:
         output_path = self.output_dir / output_file
         
         try:
-            # Initialize TTS communicator
-            communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
+            logger.info(f"Generating audio: {output_file}")
             
-            # Save to file
-            await communicate.save(str(output_path))
+            # Initialize TTS communicator
+            communicate = edge_tts.Communicate(
+                text, 
+                self.voice, 
+                rate=self.rate
+            )
+            
+            # Save to file with timeout
+            try:
+                await asyncio.wait_for(
+                    communicate.save(str(output_path)),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout generating audio, retrying...")
+                if retry_count < self.max_retries:
+                    await asyncio.sleep(self.retry_delay)
+                    return await self.generate_async(text, output_file, retry_count + 1)
+                raise Exception("Audio generation timeout after retries")
             
             logger.info(f"Audio generated successfully: {output_path}")
             return str(output_path)
             
         except Exception as e:
-            logger.error(f"Error generating audio: {e}")
+            error_msg = str(e)
+            logger.error(f"Error generating audio (attempt {retry_count + 1}/{self.max_retries}): {error_msg}")
+            
+            # Retry on network errors or 403
+            if retry_count < self.max_retries and any(x in error_msg for x in ['403', '401', 'Connection', 'timeout', 'connection reset']):
+                logger.info(f"Retrying in {self.retry_delay} seconds...")
+                await asyncio.sleep(self.retry_delay)
+                return await self.generate_async(text, output_file, retry_count + 1)
+            
             raise
 
     def generate(self, text: str, output_file: str = None) -> str:
@@ -75,10 +103,24 @@ class AudioGenerator:
         Returns:
             Path to generated audio file
         """
-        return asyncio.run(self.generate_async(text, output_file))
+        try:
+            # Create new event loop if needed (Windows compatibility)
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            return loop.run_until_complete(self.generate_async(text, output_file))
+        except Exception as e:
+            logger.error(f"Failed to generate audio: {e}")
+            raise
 
     async def generate_batch_async(self, texts: list, output_files: list = None) -> list:
-        """Generate multiple audio files concurrently.
+        """Generate multiple audio files with rate limiting to avoid 403.
         
         Args:
             texts: List of texts to convert
@@ -91,17 +133,19 @@ class AudioGenerator:
             output_files = [f"audio_batch_{i}_{datetime.now().strftime('%H%M%S')}.mp3" 
                           for i in range(len(texts))]
         
-        tasks = [self.generate_async(text, filename) 
-                for text, filename in zip(texts, output_files)]
+        results = []
+        for text, filename in zip(texts, output_files):
+            try:
+                # Generate with delay between requests
+                result = await self.generate_async(text, filename)
+                results.append(result)
+                # Add delay between requests to avoid rate limiting
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Error generating {filename}: {e}")
+                results.append(None)
         
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Log any errors
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Error generating audio batch item {i}: {result}")
-        
-        return [r for r in results if not isinstance(r, Exception)]
+        return [r for r in results if r is not None]
 
     def generate_batch(self, texts: list, output_files: list = None) -> list:
         """Generate multiple audio files (synchronous wrapper).
@@ -113,7 +157,16 @@ class AudioGenerator:
         Returns:
             List of generated audio file paths
         """
-        return asyncio.run(self.generate_batch_async(texts, output_files))
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        return loop.run_until_complete(self.generate_batch_async(texts, output_files))
 
     async def generate_with_metadata(self, text: str, metadata: dict = None) -> dict:
         """Generate audio and save metadata about the audio.
